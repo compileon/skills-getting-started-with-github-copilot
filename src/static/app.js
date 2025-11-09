@@ -4,14 +4,27 @@ document.addEventListener("DOMContentLoaded", () => {
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
 
+  // Helper to avoid injecting raw HTML (basic escaping)
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
   // Function to fetch activities from API
   async function fetchActivities() {
     try {
-      const response = await fetch("/activities");
+  const response = await fetch("/activities", { cache: "no-store" });
       const activities = await response.json();
 
       // Clear loading message
       activitiesList.innerHTML = "";
+
+      // Reset select options to avoid duplicates on refresh
+      activitySelect.innerHTML = '<option value="">-- Select an activity --</option>';
 
       // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
@@ -20,11 +33,28 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const spotsLeft = details.max_participants - details.participants.length;
 
+        // Build participants list HTML (safe-escaped) and include a remove button for each participant
+        const participantsHtml = details.participants && details.participants.length
+          ? details.participants.map(p => `
+              <li class="participant-item">
+                <span class="participant-email">${escapeHtml(p)}</span>
+                <button class="remove-btn" data-activity="${escapeHtml(name)}" data-email="${escapeHtml(p)}" title="Remove ${escapeHtml(p)}">&times;</button>
+              </li>
+            `).join("")
+          : '<li class="no-participants">No participants yet</li>';
+
         activityCard.innerHTML = `
-          <h4>${name}</h4>
-          <p>${details.description}</p>
-          <p><strong>Schedule:</strong> ${details.schedule}</p>
+          <h4>${escapeHtml(name)}</h4>
+          <p>${escapeHtml(details.description)}</p>
+          <p><strong>Schedule:</strong> ${escapeHtml(details.schedule)}</p>
           <p><strong>Availability:</strong> ${spotsLeft} spots left</p>
+
+          <div class="participants">
+            <h5>Participants</h5>
+            <ul class="participants-list">
+              ${participantsHtml}
+            </ul>
+          </div>
         `;
 
         activitiesList.appendChild(activityCard);
@@ -41,6 +71,50 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Delegate click handler for remove buttons (unregister participant)
+  activitiesList.addEventListener("click", async (event) => {
+    const btn = event.target.closest(".remove-btn");
+    if (!btn) return;
+
+    const activity = btn.dataset.activity;
+    const email = btn.dataset.email;
+
+    if (!activity || !email) return;
+
+    // Confirm with the user before removing
+    if (!confirm(`Unregister ${email} from ${activity}?`)) return;
+
+    try {
+      const response = await fetch(
+        `/activities/${encodeURIComponent(activity)}/participants?email=${encodeURIComponent(email)}`,
+        { method: "DELETE", cache: "no-store" }
+      );
+
+      const result = await response.json();
+
+      if (response.ok) {
+        messageDiv.textContent = result.message || "Participant removed";
+        messageDiv.className = "success";
+        messageDiv.classList.remove("hidden");
+
+  // Refresh activities to update the UI
+  await fetchActivities();
+      } else {
+        messageDiv.textContent = result.detail || "Failed to remove participant";
+        messageDiv.className = "error";
+        messageDiv.classList.remove("hidden");
+      }
+
+      // Hide message after a short delay
+      setTimeout(() => messageDiv.classList.add("hidden"), 4000);
+    } catch (err) {
+      console.error("Error removing participant:", err);
+      messageDiv.textContent = "Failed to remove participant. Please try again.";
+      messageDiv.className = "error";
+      messageDiv.classList.remove("hidden");
+    }
+  });
+
   // Handle form submission
   signupForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -53,6 +127,7 @@ document.addEventListener("DOMContentLoaded", () => {
         `/activities/${encodeURIComponent(activity)}/signup?email=${encodeURIComponent(email)}`,
         {
           method: "POST",
+          cache: "no-store",
         }
       );
 
@@ -62,6 +137,9 @@ document.addEventListener("DOMContentLoaded", () => {
         messageDiv.textContent = result.message;
         messageDiv.className = "success";
         signupForm.reset();
+
+  // Refresh activities so participants list and availability update
+  await fetchActivities();
       } else {
         messageDiv.textContent = result.detail || "An error occurred";
         messageDiv.className = "error";
