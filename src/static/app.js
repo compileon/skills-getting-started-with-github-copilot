@@ -17,7 +17,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Function to fetch activities from API
   async function fetchActivities() {
     try {
-      const response = await fetch("/activities");
+  const response = await fetch("/activities", { cache: "no-store" });
       const activities = await response.json();
 
       // Clear loading message
@@ -33,9 +33,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const spotsLeft = details.max_participants - details.participants.length;
 
-        // Build participants list HTML (safe-escaped)
+        // Build participants list HTML (safe-escaped) and include a remove button for each participant
         const participantsHtml = details.participants && details.participants.length
-          ? details.participants.map(p => `<li class="participant-item">${escapeHtml(p)}</li>`).join("")
+          ? details.participants.map(p => `
+              <li class="participant-item">
+                <span class="participant-email">${escapeHtml(p)}</span>
+                <button class="remove-btn" data-activity="${escapeHtml(name)}" data-email="${escapeHtml(p)}" title="Remove ${escapeHtml(p)}">&times;</button>
+              </li>
+            `).join("")
           : '<li class="no-participants">No participants yet</li>';
 
         activityCard.innerHTML = `
@@ -66,6 +71,50 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Delegate click handler for remove buttons (unregister participant)
+  activitiesList.addEventListener("click", async (event) => {
+    const btn = event.target.closest(".remove-btn");
+    if (!btn) return;
+
+    const activity = btn.dataset.activity;
+    const email = btn.dataset.email;
+
+    if (!activity || !email) return;
+
+    // Confirm with the user before removing
+    if (!confirm(`Unregister ${email} from ${activity}?`)) return;
+
+    try {
+      const response = await fetch(
+        `/activities/${encodeURIComponent(activity)}/participants?email=${encodeURIComponent(email)}`,
+        { method: "DELETE", cache: "no-store" }
+      );
+
+      const result = await response.json();
+
+      if (response.ok) {
+        messageDiv.textContent = result.message || "Participant removed";
+        messageDiv.className = "success";
+        messageDiv.classList.remove("hidden");
+
+  // Refresh activities to update the UI
+  await fetchActivities();
+      } else {
+        messageDiv.textContent = result.detail || "Failed to remove participant";
+        messageDiv.className = "error";
+        messageDiv.classList.remove("hidden");
+      }
+
+      // Hide message after a short delay
+      setTimeout(() => messageDiv.classList.add("hidden"), 4000);
+    } catch (err) {
+      console.error("Error removing participant:", err);
+      messageDiv.textContent = "Failed to remove participant. Please try again.";
+      messageDiv.className = "error";
+      messageDiv.classList.remove("hidden");
+    }
+  });
+
   // Handle form submission
   signupForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -78,6 +127,7 @@ document.addEventListener("DOMContentLoaded", () => {
         `/activities/${encodeURIComponent(activity)}/signup?email=${encodeURIComponent(email)}`,
         {
           method: "POST",
+          cache: "no-store",
         }
       );
 
@@ -88,8 +138,8 @@ document.addEventListener("DOMContentLoaded", () => {
         messageDiv.className = "success";
         signupForm.reset();
 
-        // Refresh activities so participants list and availability update
-        fetchActivities();
+  // Refresh activities so participants list and availability update
+  await fetchActivities();
       } else {
         messageDiv.textContent = result.detail || "An error occurred";
         messageDiv.className = "error";
